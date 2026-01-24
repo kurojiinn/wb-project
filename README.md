@@ -41,12 +41,17 @@ cd wb-project
 ```bash
 go mod tidy
 ```
-3. Миграция бд:
+3. Запуск docker-compose:
+
+```bash
+docker-compose up
+```
+4. Миграция бд:
 
 ```bash
 make migrate-up
 ```
-4. Запуск сервиса:
+5. Запуск сервиса:
 
 ```bash
 go run cmd/app/
