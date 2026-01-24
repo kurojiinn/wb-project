@@ -1,0 +1,49 @@
+{
+  "order_uid": "d0e2c950-7ae6-445c-80e7-09c4e1486769",
+  "track_number": "WB-3853178707",
+  "entry": "WBIL",
+  "delivery": {
+    "name": "Pierre Herzog",
+    "phone": "+79398337799",
+    "zip": "89537",
+    "city": "DuBuqueland",
+    "address": "18261 East Lightsview, Sawaynville, Arizona 74209",
+    "region": "New Hampshire",
+    "email": "janaauer@davis.com"
+  },
+  "payment": {
+    "transaction": "99ba8f75-1e00-45f6-b247-5c05cff5aaea",
+    "request_id": "3736747629",
+    "currency": "RUB",
+    "provider": "wbpay",
+    "amount": 54832,
+    "payment_dt": 1769197130,
+    "bank": "alpha",
+    "delivery_cost": 500,
+    "goods_total": 30855,
+    "custom_fee": 10
+  },
+  "items": [
+    {
+      "chrt_id": 613,
+      "track_number": "TRK-25337",
+      "price": 2528,
+      "rid": "4ff92f06-cdd6-4ec4-a27d-3ca2f943090a",
+      "name": "Alvis Frami",
+      "sale": 24,
+      "size": "XL",
+      "total_price": 6171,
+      "nm_id": 714716,
+      "brand": "Torp LLC",
+      "status": 202
+    }
+  ],
+  "locale": "ru",
+  "internal_signature": "",
+  "customer_id": "ee8cac58-811b-4c8e-bc4e-d9956a7fba28",
+  "delivery_service": "meest",
+  "shard_key": "9",
+  "sm_id": 99,
+  "date_created": "2026-01-23T22:38:50.847319+03:00",
+  "oof_shard": "1"
+}
