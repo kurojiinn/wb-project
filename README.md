@@ -228,8 +228,7 @@ go run cmd/app/
 
 # Тесты
 go test ./internal/service -v -cover
+```
 
-> **Пример трейса обработки сообщения из Kafka:**
-> <img width="1920" height="255" alt="image" src="https://github.com/user-attachments/assets/20ab0bc2-fdb5-45f0-9376-081df53fa7df" />
-
-
+**Пример трейса обработки сообщения из Kafka:**
+![img.png](docs/img.png)
