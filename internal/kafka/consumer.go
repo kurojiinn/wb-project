@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
+	"wb-project/internal/logger/sl"
 	"wb-project/internal/metric"
 
 	"github.com/IBM/sarama"
@@ -56,24 +58,34 @@ func (order *OrderConsumer) Start(ctx context.Context) error {
 		case message := <-partitionConsumer.Messages():
 			parCtx := otel.GetTextMapPropagator().Extract(ctx, KafkaHeaderCarrier(message.Headers))
 
+			//трасировка
 			tr := otel.Tracer("consumer")
 			processCtx, span := tr.Start(parCtx, "Kafka.Consume",
 				trace.WithSpanKind(trace.SpanKindConsumer)) //отмечаем что это консьюмер
+
+			//логирование
+			slog.Info("Сообщение из кафки прочитано: ",
+				slog.String("topic", order.topic),
+				slog.Int64("partition", int64(message.Partition)),
+				slog.Int64("offset", message.Offset),
+				sl.Traced(parCtx), // Связываем лог с трейсом
+			)
+
 			span.SetAttributes(
 				attribute.String("message.kafka.topic", order.topic),
 				attribute.Int("message.kafka.partition", 0),
 				attribute.Int64("message.kafka.offset", message.Offset))
 
 			if err := order.processor(processCtx, message.Value); err != nil {
+				slog.Error("error processing message",
+					slog.Any("error", err),
+					sl.Traced(processCtx))
 				span.RecordError(err)
-				log.Printf("Error processing message: %v", err)
 				metric.KafkaMessagesTotal.WithLabelValues("error").Inc()
 			} else {
 				metric.KafkaMessagesTotal.WithLabelValues("success").Inc()
 			}
 			span.End()
-			//логируем сообщения, которые читаем
-			fmt.Printf("Сообщение: %s ", string(message.Value))
 		}
 	}
 }

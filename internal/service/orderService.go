@@ -7,8 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
+	"wb-project/internal/logger/sl"
 	"wb-project/internal/metric"
 	"wb-project/internal/models"
 
@@ -61,23 +62,31 @@ func (s *OrderService) HandleOrderMessage(ctx context.Context, data []byte) erro
 	defer span.End()
 	var order models.Order
 
+	slog.Debug("парсинг order", sl.Traced(ctx))
 	//1. Парсинг
 	if err := json.Unmarshal(data, &order); err != nil {
-		return fmt.Errorf("ошибка при парсинге, игнорируем: %v", err)
+		slog.Error("failed to unmarshal order", slog.Any("error", err), sl.Traced(ctx))
+		return fmt.Errorf("ошибка при парсинге, игнорируем: %w", err)
 	}
+	slog.Info("order успешно распарсен", slog.String("order_uid", order.OrderUID), sl.Traced(ctx))
 
 	span.SetAttributes(attribute.String("order_uid", order.OrderUID))
 	//2. Валидация данных, до сохранения в бд
 	if err := s.validateOrder(&order); err != nil {
-		return fmt.Errorf("валидация не пройдена %v", err)
+		return fmt.Errorf("валидация не пройдена %w", err)
 	}
 
 	start := time.Now()
 	//3. Сохранение в бд
 	if err := s.repo.Save(ctx, order); err != nil {
+		slog.Error("failed to save order to db",
+			slog.String("order_uid", order.OrderUID),
+			slog.Any("error", err),
+			sl.Traced(ctx),
+		)
 		span.RecordError(err)
 		metric.DbOperationsTotal.WithLabelValues("save", "error").Inc()
-		return fmt.Errorf("ошибка сохранения в БД: %v", err)
+		return fmt.Errorf("ошибка сохранения в БД: %w", err)
 	}
 	span.AddEvent("order сохранен в бд")
 
@@ -88,29 +97,31 @@ func (s *OrderService) HandleOrderMessage(ctx context.Context, data []byte) erro
 	//4. Добавление в кеш
 	s.cache.Set(order.OrderUID, &order)
 	span.AddEvent("order добавлен в кеш")
-
-	fmt.Println("Успешно сохранен order: ", order.OrderUID)
+	slog.Info("Успешно сохранен order", slog.String("order_uid", order.OrderUID), sl.Traced(ctx))
 	return nil
 }
 
 // GetOrder - функция для получения
 func (s *OrderService) GetOrder(ctx context.Context, uid string) (models.Order, error) {
-	//чтобы, понимать откуда пришел отчет
+	//1.1 чтобы, понимать откуда пришел отчет
 	tr := otel.Tracer("orderService")
-	//запускает секундомер, и создает запись о конкретной операции
-	//тут создается trace id если это самый первый вызов и span id
-	//Функция смотрит в старый ctx. Если там уже лежит Trace ID (например, от Gin), то новый спан автоматически становится «ребенком» предыдущего
-	ctx, span := tr.Start(ctx, "Service.GerOrder")
+	ctx, span := tr.Start(ctx, "GetOrder")
 	defer span.End()
-	//1. Поиск в кеше
+
+	span.SetAttributes(attribute.String("order_uid", uid))
+	//2. Поиск в кеше
 	if fromCache, ok := s.cache.Get(uid); ok {
+		span.AddEvent("cache hit")
+		slog.Info("order найден в кеше", slog.String("uid", uid), sl.Traced(ctx))
 		metric.CacheHitsTotal.WithLabelValues("hit").Inc()
 		return *fromCache, nil
 	}
+
+	span.AddEvent("cache miss")
+	slog.Info("Order не найдет в кеше, идем в бд", slog.String("uid", uid), sl.Traced(ctx))
 	metric.CacheHitsTotal.WithLabelValues("miss").Inc()
 
-	span.SetAttributes(attribute.String("order_uid", uid))
-	//2. возвращаем из БД, пробрасывая контекст
+	//3. возвращаем из БД, пробрасывая контекст
 	found, err := s.repo.Get(ctx, uid)
 	if err != nil {
 		span.RecordError(err)
@@ -127,9 +138,21 @@ func (s *OrderService) GetOrder(ctx context.Context, uid string) (models.Order, 
 
 // ReCache - функция для насыщения кэша
 func (s *OrderService) ReCache(ctx context.Context) error {
+	//1.1 trace
+	tr := otel.Tracer("orderService")
+
+	ctx, span := tr.Start(ctx, "Service.ReCache")
+	defer span.End()
+
+	slog.Info("Старт разогрева кеша", sl.Traced(ctx))
+	start := time.Now()
 	//2. Запрос в бд, для получения всех заказов
 	orders, err := s.repo.GetAll(ctx)
 	if err != nil {
+		slog.Error("Ошибка при загрузке всех пользователей",
+			slog.Any("error", err),
+			sl.Traced(ctx))
+		span.RecordError(err)
 		return fmt.Errorf("не удалось прочитать данные из кэш при старте: %w", err)
 	}
 
@@ -137,8 +160,20 @@ func (s *OrderService) ReCache(ctx context.Context) error {
 	for i := range orders {
 		s.cache.Set(orders[i].OrderUID, &orders[i])
 	}
+	//4. Обновление метрик
 	metric.CacheSize.Set(float64(len(orders)))
-	log.Printf("Кэш успешно восстановлен: загружено %d записей", len(orders))
+
+	duration := time.Since(start)
+	slog.Info("Кеш успешно разогрет",
+		slog.Int("count", len(orders)),
+		slog.Duration("duration", duration),
+		sl.Traced(ctx),
+	)
+
+	span.SetAttributes(
+		attribute.Int("orders.count", len(orders)),
+		attribute.String("duration", duration.String()),
+	)
 	return nil
 }
 

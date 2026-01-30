@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
+	"wb-project/internal/logger/sl"
 	"wb-project/internal/metric"
 	"wb-project/internal/models"
 
@@ -31,18 +33,27 @@ func NewOrderHandler(s OrderProvider) *OrderHandler {
 //возвращать данные заказа из кеша (JSON API). Если в кеше данных нет, можно подтягивать из БД.
 
 func (s *OrderHandler) GetOrderHandler(c *gin.Context) {
+	ctx := c.Request.Context()
 	uid := c.Param("order_uid")
 	if uid == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Неправильный ID"})
 		return
 	}
-	ctx := c.Request.Context()
 
+	slog.Info("выполняем запрос",
+		slog.String("uid", uid),
+		sl.Traced(ctx),
+	)
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(attribute.String("http.request.order_uid", uid))
 
 	order, err := s.service.GetOrder(ctx, uid)
 	if err != nil {
+		slog.Error("order не найден",
+			slog.String("uid", uid),
+			slog.Any("error", err),
+			sl.Traced(ctx))
+		span.RecordError(err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Введен неверный ID: заказ не найден"})
 		return
 	}
