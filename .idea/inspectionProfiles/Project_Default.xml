@@ -6,5 +6,6 @@
         <function importPath="wb-project/cmd/app" name="NewApplication" />
       </functions>
     </inspection_tool>
+    <inspection_tool class="GoLinter" enabled="true" level="WARNING" enabled_by_default="true" />
   </profile>
 </component>
