@@ -60,6 +60,12 @@ go run cmd/app/
 * HTTP сервер на `:8080`
 * Kafka Producer и Consumer
 * Подгрузка кэша из БД
+  
+* ## 🔗 Полезные ссылки (локально)
+
+* **API**: `http://localhost:8080`
+* **Prometheus**: `http://localhost:9090`
+* **Jaeger UI**: `http://localhost:16686`
 
 ---
 
@@ -154,6 +160,25 @@ order_cache_cof_items_count{result="hit"} 2
 
 ---
 
+## 🔍 Observability (Monitoring & Tracing)
+
+Сервис реализует концепцию "Three Pillars of Observability":
+
+### 🛰 Distributed Tracing (Jaeger)
+Интеграция с **OpenTelemetry** позволяет отслеживать полный путь запроса:
+* **HTTP Trace**: `Client -> Gin (otelgin) -> Service -> PostgreSQL (otelsql)`
+* **Kafka Trace**: `Producer -> Kafka Headers -> Consumer -> Service -> PostgreSQL`
+* **Визуализация**: Все SQL-запросы отображаются как вложенные спаны, что позволяет находить узкие места в БД.
+
+### 📝 Structured Logging (slog)
+Логирование выполнено в формате **JSON** (стандарт для ELK/Loki):
+* Каждый лог привязан к `trace_id` из контекста.
+* Уровни логирования: `INFO` для бизнес-событий, `ERROR` для сбоев, `DEBUG` для парсинга.
+
+### 📊 Metrics (Prometheus + Grafana)
+Сбор метрик по производительности БД, хитам кэша и количеству обработанных сообщений Kafka.
+---
+
 ## 🧪 Тесты
 
 * Расположены в `internal/service/service_test.go`
@@ -191,7 +216,7 @@ ok      wb-project/internal/service     coverage: 97.4% of statements
 * **Kafka** — интеграция с брокером
 * **Metrics** — Prometheus
 * **Application** — оркестрация всех компонентов, graceful shutdown
-
+* **OpenTelemetry**: инструментация кода для сбора телеметрии.
 
 ---
 
@@ -203,4 +228,8 @@ go run cmd/app/
 
 # Тесты
 go test ./internal/service -v -cover
+
+> **Пример трейса обработки сообщения из Kafka:**
+> <img width="1920" height="255" alt="image" src="https://github.com/user-attachments/assets/20ab0bc2-fdb5-45f0-9376-081df53fa7df" />
+
 
