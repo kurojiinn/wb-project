@@ -44,3 +44,12 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=supersecret
     ports:
       - "3000:3000"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # Порт для визуализации (открой в браузере)
+      - "4318:4318"     # Порт для приема трейсов от твоего Go-кода по HTTP (OTLP)
+      - "4317:4317"     # Порт для приема трейсов по gRPC (на будущее)
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true # Обязательно включаем поддержку OTLP

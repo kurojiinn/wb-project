@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"log"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ type OrderCache struct {
 	defaultExpiration time.Duration //Это стандартное время жизни.
 	cleanupInterval   time.Duration //Это частота работы нашего "уборщика", который чистит кеш
 	sync.RWMutex
+	ticker *time.Ticker
 }
 
 func NewOrderCache(defaultExpiration, cleanupInterval time.Duration) *OrderCache {
@@ -27,11 +29,8 @@ func NewOrderCache(defaultExpiration, cleanupInterval time.Duration) *OrderCache
 		items:             make(map[string]cacheItem),
 		defaultExpiration: defaultExpiration,
 		cleanupInterval:   cleanupInterval,
+		ticker:            time.NewTicker(cleanupInterval),
 	}
-
-	//Запускаем горутину-уборщик при создании кэша
-	go c.gc()
-
 	return c
 }
 
@@ -68,26 +67,32 @@ func (ch *OrderCache) Get(uid string) (*models.Order, bool) {
 	return res.data, true
 }
 
-func (ch *OrderCache) gc() {
-	ticker := time.NewTicker(ch.cleanupInterval)
-	defer ticker.Stop()
+func (ch *OrderCache) GC(ctx context.Context) error {
 	log.Println("Начинаем проверку кеша")
-	for range ticker.C {
-		ch.Lock()
-		// ... удаление просроченных ключей ...
-		now := time.Now().UnixNano() //текущее время в UnixNano
-		deletedCounter := 0
-		for key, item := range ch.items { //
-			if now > item.expiresAt { //проверка, что настало время очистки
-				metric.CacheSize.Dec()
-				delete(ch.items, key) //удаление данных их кеша
-				deletedCounter++
+	for {
+		select {
+		case <-ch.ticker.C:
+			ch.Lock()
+			// ... удаление просроченных ключей ...
+			now := time.Now().UnixNano() //текущее время в UnixNano
+			deletedCounter := 0
+			for key, item := range ch.items { //
+				if now > item.expiresAt { //проверка, что настало время очистки
+					metric.CacheSize.Dec()
+					delete(ch.items, key) //удаление данных их кеша
+					deletedCounter++
+				}
 			}
+			if deletedCounter > 0 {
+				log.Printf("GC: удалено %d просроченных записей", deletedCounter)
+			}
+			ch.Unlock()
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		if deletedCounter > 0 {
-			log.Printf("GC: удалено %d просроченных записей", deletedCounter)
-		}
-
-		ch.Unlock()
 	}
+}
+
+func (ch *OrderCache) Stop() {
+	defer ch.ticker.Stop()
 }

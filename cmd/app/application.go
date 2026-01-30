@@ -15,6 +15,9 @@ import (
 	"wb-project/internal/handler"
 	"wb-project/internal/kafka"
 	"wb-project/internal/service"
+
+	"go.opentelemetry.io/otel/sdk/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 type Application struct {
@@ -22,6 +25,8 @@ type Application struct {
 	consumer *kafka.OrderConsumer
 	producer *kafka.OrderProducer
 	service  *service.OrderService
+	cache    *cache.OrderCache
+	tp       *trace.TracerProvider
 }
 
 func NewApplication(cfg *config.Config) (*Application, error) {
@@ -56,14 +61,23 @@ func NewApplication(cfg *config.Config) (*Application, error) {
 		consumer: consumer,
 		producer: producer,
 		service:  orderService,
+		cache:    orderCache,
+		tp:       nil,
 	}, nil
 }
 
-func (app *Application) Run(ctx context.Context) error {
+func (app *Application) Run(ctx context.Context, tp *sdktrace.TracerProvider) error {
+	app.tp = tp
 
 	if err := app.service.ReCache(ctx); err != nil {
 		log.Printf("Не удалось восстановить кэш из БД: %v", err)
 	}
+	go func() {
+		log.Println("Запуск Consumer...")
+		if err := app.cache.GC(ctx); err != nil {
+			log.Printf("GC остановлен : %v", err)
+		}
+	}()
 	// Запуск консьюмера
 	go func() {
 		log.Println("Запуск Consumer...")
@@ -92,13 +106,9 @@ func (app *Application) Run(ctx context.Context) error {
 
 	// 11. Остановка HTTP сервера
 	// Даем 5 секунд на завершение текущих запросов
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	app.Shutdown(ctx)
-
-	if err := app.srv.Stop(shutdownCtx); err != nil {
-		log.Printf("Ошибка при остановке HTTP сервера: %v", err)
-	}
+	app.Shutdown(shutdownContext)
 
 	return nil
 }
@@ -113,4 +123,5 @@ func (app *Application) Shutdown(ctx context.Context) {
 	if err := app.producer.Close(); err != nil {
 		log.Printf("Ошибка остановки Kafka Producer: %v", err)
 	}
+	app.cache.Stop()
 }

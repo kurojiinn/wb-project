@@ -7,8 +7,12 @@ import (
 	"wb-project/internal/metric"
 
 	"github.com/IBM/sarama"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
+type KafkaHeaderCarrier []*sarama.RecordHeader
 type MessageProcessor func(context.Context, []byte) error
 type OrderConsumer struct {
 	consumer sarama.Consumer
@@ -50,12 +54,24 @@ func (order *OrderConsumer) Start(ctx context.Context) error {
 			log.Println("Kafka consumer stopping...")
 			return ctx.Err()
 		case message := <-partitionConsumer.Messages():
-			if err := order.processor(ctx, message.Value); err != nil {
+			parCtx := otel.GetTextMapPropagator().Extract(ctx, KafkaHeaderCarrier(message.Headers))
+
+			tr := otel.Tracer("consumer")
+			processCtx, span := tr.Start(parCtx, "Kafka.Consume",
+				trace.WithSpanKind(trace.SpanKindConsumer)) //отмечаем что это консьюмер
+			span.SetAttributes(
+				attribute.String("message.kafka.topic", order.topic),
+				attribute.Int("message.kafka.partition", 0),
+				attribute.Int64("message.kafka.offset", message.Offset))
+
+			if err := order.processor(processCtx, message.Value); err != nil {
+				span.RecordError(err)
 				log.Printf("Error processing message: %v", err)
 				metric.KafkaMessagesTotal.WithLabelValues("error").Inc()
 			} else {
 				metric.KafkaMessagesTotal.WithLabelValues("success").Inc()
 			}
+			span.End()
 			//логируем сообщения, которые читаем
 			fmt.Printf("Сообщение: %s ", string(message.Value))
 		}
@@ -64,4 +80,24 @@ func (order *OrderConsumer) Start(ctx context.Context) error {
 
 func (order *OrderConsumer) Close() error {
 	return order.consumer.Close()
+}
+
+func (c KafkaHeaderCarrier) Get(key string) string {
+	for _, h := range c {
+		if string(h.Key) == key {
+			return string(h.Value)
+		}
+	}
+	return ""
+}
+
+func (c KafkaHeaderCarrier) Set(key string, value string) {
+}
+
+func (c KafkaHeaderCarrier) Keys() []string {
+	keys := make([]string, len(c))
+	for i, h := range c {
+		keys[i] = string(h.Key)
+	}
+	return keys
 }

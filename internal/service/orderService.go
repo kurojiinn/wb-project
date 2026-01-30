@@ -13,6 +13,8 @@ import (
 	"wb-project/internal/models"
 
 	"github.com/go-playground/validator/v10"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // OrderRepository описывает контракт для постоянного хранения и получения заказов.
@@ -53,6 +55,10 @@ func NewOrderService(repo OrderRepository, orderCache OrderCache) *OrderService 
 
 // HandleOrderMessage - функция для получения заказов
 func (s *OrderService) HandleOrderMessage(ctx context.Context, data []byte) error {
+	tr := otel.Tracer("orderService")
+	ctx, span := tr.Start(ctx, "HandleOrderMessage")
+
+	defer span.End()
 	var order models.Order
 
 	//1. Парсинг
@@ -60,6 +66,7 @@ func (s *OrderService) HandleOrderMessage(ctx context.Context, data []byte) erro
 		return fmt.Errorf("ошибка при парсинге, игнорируем: %v", err)
 	}
 
+	span.SetAttributes(attribute.String("order_uid", order.OrderUID))
 	//2. Валидация данных, до сохранения в бд
 	if err := s.validateOrder(&order); err != nil {
 		return fmt.Errorf("валидация не пройдена %v", err)
@@ -68,15 +75,19 @@ func (s *OrderService) HandleOrderMessage(ctx context.Context, data []byte) erro
 	start := time.Now()
 	//3. Сохранение в бд
 	if err := s.repo.Save(ctx, order); err != nil {
+		span.RecordError(err)
 		metric.DbOperationsTotal.WithLabelValues("save", "error").Inc()
 		return fmt.Errorf("ошибка сохранения в БД: %v", err)
 	}
+	span.AddEvent("order сохранен в бд")
+
 	//Метрика, которая увеличивается, чтобы показать кол-во успешных запросов в бд(сохранения заказов)
 	metric.DbOperationsTotal.WithLabelValues("save", "success").Inc()
 	metric.DbDuration.WithLabelValues("save").Observe(time.Since(start).Seconds())
 
 	//4. Добавление в кеш
 	s.cache.Set(order.OrderUID, &order)
+	span.AddEvent("order добавлен в кеш")
 
 	fmt.Println("Успешно сохранен order: ", order.OrderUID)
 	return nil
@@ -84,6 +95,13 @@ func (s *OrderService) HandleOrderMessage(ctx context.Context, data []byte) erro
 
 // GetOrder - функция для получения
 func (s *OrderService) GetOrder(ctx context.Context, uid string) (models.Order, error) {
+	//чтобы, понимать откуда пришел отчет
+	tr := otel.Tracer("orderService")
+	//запускает секундомер, и создает запись о конкретной операции
+	//тут создается trace id если это самый первый вызов и span id
+	//Функция смотрит в старый ctx. Если там уже лежит Trace ID (например, от Gin), то новый спан автоматически становится «ребенком» предыдущего
+	ctx, span := tr.Start(ctx, "Service.GerOrder")
+	defer span.End()
 	//1. Поиск в кеше
 	if fromCache, ok := s.cache.Get(uid); ok {
 		metric.CacheHitsTotal.WithLabelValues("hit").Inc()
@@ -91,9 +109,11 @@ func (s *OrderService) GetOrder(ctx context.Context, uid string) (models.Order, 
 	}
 	metric.CacheHitsTotal.WithLabelValues("miss").Inc()
 
+	span.SetAttributes(attribute.String("order_uid", uid))
 	//2. возвращаем из БД, пробрасывая контекст
 	found, err := s.repo.Get(ctx, uid)
 	if err != nil {
+		span.RecordError(err)
 		metric.DbOperationsTotal.WithLabelValues("get", "error").Inc()
 		return models.Order{}, fmt.Errorf("order не найден в БД %w", err)
 	}
